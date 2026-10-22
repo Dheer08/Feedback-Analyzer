@@ -1,136 +1,153 @@
-# Project 1: Customer Feedback Analyzer (Gen AI)
+# 📝 Customer Feedback Analyzer
 
-This is your first full project. It puts together almost everything from the course into one real, useful app.
+A Generative AI app that turns a pile of customer reviews into instant insight: how customers feel, how they rate the experience, and what they keep talking about. Paste reviews, click **Analyze**, and get a dashboard in seconds.
 
-**The problem:** A restaurant owner has dozens of customer reviews and no time to read them all. They want a simple tool: paste the reviews, click a button, and instantly see how customers feel and what they keep complaining about.
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4.1-412991?logo=openai&logoColor=white)
+![Gemini](https://img.shields.io/badge/Google_Gemini-4285F4?logo=googlegemini&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-E92063?logo=pydantic&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
+![uv](https://img.shields.io/badge/uv-DE5FE9?logo=uv&logoColor=white)
 
-**What you will build:**
-- A **backend** (FastAPI) that uses Gemini to analyze one review.
-- A **frontend** (Streamlit dashboard) that the owner actually clicks on. It sends every review to your backend and shows a summary.
+## The problem
 
-The fun part: the frontend calls your *own* backend the same way you called the currency API in Lesson 9. You are now on both sides of the API.
+A restaurant owner receives dozens of reviews a week and has no time to read them all. They need answers to three questions fast: *Are customers happy? How happy? What are they complaining about?*
 
----
+## What it does
 
-## What each lesson gave you
+- **Sentiment:** classifies each review as positive, negative or neutral.
+- **Rating:** scores each review from 1 (very bad) to 5 (very good).
+- **Theme:** tags the main topic in one word, such as *delivery*, *price* or *taste*.
+- **Dashboard:** shows average score, % positive and the top theme, with sentiment and theme charts.
+- **History:** saves analysed reviews to a SQLite database so trends build up over time.
 
-| From lesson | Used here for |
-|---|---|
-| FastAPI + uv (10) | The backend service |
-| Pydantic + structured output (3, 7) | Clean input/output: `label`, `score`, `theme` |
-| Loops, lists, dicts (1) | Going through many reviews, collecting results |
-| SQLite database (12) | Saving every analyzed review to a `feedback.db` table |
-| Error handling (5) | One bad review must not crash the whole batch |
-| Calling APIs (9) | The frontend calling the backend |
-| Streamlit (4, 6) | The dashboard |
+## Screenshots
 
----
+| Paste reviews and analyze | Results dashboard |
+|:---:|:---:|
+| ![Reviews pasted into the analyzer](images/input.png) | ![Summary metrics, sentiment and theme charts](images/results.png) |
 
-## Step 1: Set up the project
+## Architecture
 
+The AI logic lives in its own **REST API**, and the dashboard is a client of that API. Any other app (a mobile app, a scheduled job, a CRM integration) could call the same backend.
+
+```mermaid
+flowchart LR
+    U[Business owner] --> S[Streamlit dashboard<br/>app.py]
+    S -- "POST /analyze<br/>one review" --> F[FastAPI backend<br/>api.py]
+    F -- "prompt + JSON schema" --> G[LLM provider<br/>OpenAI GPT-4.1 or Gemini]
+    G -- "structured JSON" --> F
+    F -- "label · score · theme" --> S
+    S -- "save results" --> D[(SQLite<br/>feedback.db)]
+```
+
+### Design decisions
+
+- **Provider-agnostic.** The backend works with OpenAI (default) or Google Gemini. Switching is one line in `.env`, which keeps the app running when one provider has an outage.
+- **Structured output, not free text.** The model is given a Pydantic schema, so every reply is validated JSON: `label` must be positive, negative or neutral, and `score` must be between 1 and 5. Replies are validated again on the server, so out-of-range or malformed values are rejected, never shown.
+- **Deterministic results.** Temperature is set to 0, so the same review gets the same analysis.
+- **Fault tolerant.** One failed review never stops the batch. Failures are reported with their cause, excluded from the statistics and never saved to the database.
+- **Clear errors.** If the backend isn't running, the dashboard says so and explains how to start it. Provider failures (outages, refusals, invalid output) return an HTTP 502 with the reason.
+- **Configurable.** The model, backend URL and database path are set in `.env`, not hard-coded.
+
+## API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Checks that the service is up and reports the provider and model in use |
+| `POST` | `/analyze` | Analyses one review |
+
+**Example request**
 ```bash
-uv init 11_project_feedback_analyzer
-cd 11_project_feedback_analyzer
-uv add "fastapi[standard]" google-genai python-dotenv pydantic streamlit requests
+curl -X POST http://127.0.0.1:8000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"text": "The food was delicious but the delivery took over an hour."}'
 ```
 
-Put your Gemini key in a `.env` file (see `sample.env`):
-
-```
-GOOGLE_API_KEY=your_key_here
-```
-
----
-
-## Step 2: The backend (`api.py`)
-
-This is almost the same as the sentiment API from Lesson 10. We just add one more field to the answer: a one-word **theme** (like "delivery" or "taste"), so the owner can see *what* people talk about.
-
-The full code is in `api.py`. The important part is the answer shape:
-
-```python
-class Analysis(BaseModel):
-    label: str   # "positive", "negative", or "neutral"
-    score: int   # 1 (very bad) to 5 (very good)
-    theme: str   # one word, e.g. "delivery"
+**Example response**
+```json
+{"label": "negative", "score": 2, "theme": "delivery"}
 ```
 
-Run the backend in its **own terminal** and leave it running:
+Interactive documentation is generated automatically at `http://127.0.0.1:8000/docs`.
 
+## Getting started
+
+### Prerequisites
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) package manager
+- An [OpenAI API key](https://platform.openai.com/api-keys), or a free Gemini key from [Google AI Studio](https://aistudio.google.com/apikey)
+
+### 1. Clone and install
+```bash
+git clone https://github.com/Dheer08/Feedback-Analyzer.git
+cd Feedback-Analyzer
+uv sync
+```
+
+### 2. Add your API key
+```bash
+cp .env.example .env
+```
+Then open `.env` and set `OPENAI_API_KEY`. To use Gemini instead, set `LLM_PROVIDER=gemini` and `GOOGLE_API_KEY`.
+
+### 3. Start the backend (terminal 1)
 ```bash
 uv run fastapi dev api.py
 ```
 
-Quick test: open **http://127.0.0.1:8000/docs**, try `/analyze` with a review, and confirm you get back a label, score, and theme.
-
----
-
-## Step 3: The frontend (`app.py`)
-
-Open a **second terminal** (keep the backend running in the first one) and run:
-
+### 4. Start the dashboard (terminal 2)
 ```bash
 uv run streamlit run app.py
 ```
 
-Paste a few reviews (one per line) and click **Analyze**. You can copy test reviews from `sample_reviews.txt`.
+The dashboard opens at `http://localhost:8501`. Click **Load sample reviews**, then **Analyze**.
 
-The key idea in the frontend is this loop. For each review, we call our own backend and collect the answer:
+### Configuration
 
-```python
-for review in reviews:
-    try:
-        response = requests.post(API_URL, json={"text": review})
-        data = response.json()
-        results.append({
-            "review": review,
-            "label": data["label"],
-            "score": data["score"],
-            "theme": data["theme"],
-        })
-    except Exception:
-        # one bad review should not stop the whole batch
-        results.append({"review": review, "label": "error", "score": 0, "theme": "error"})
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LLM_PROVIDER` | `openai` | `openai` or `gemini` |
+| `OPENAI_API_KEY` | *(required for OpenAI)* | Your OpenAI API key |
+| `GOOGLE_API_KEY` | *(required for Gemini)* | Your Gemini API key |
+| `LLM_MODEL` | `gpt-4.1` / `gemini-2.5-flash` | Model used for analysis |
+| `BACKEND_URL` | `http://127.0.0.1:8000` | Where the dashboard finds the API |
+| `FEEDBACK_DB` | `feedback.db` | SQLite database file |
+
+## Tests
+
+```bash
+uv run pytest
 ```
 
-Then we build a small summary the owner cares about: how many reviews, the average score, the percent that are positive, and the single theme people mention most. Finally, a **Save to database** button writes every review into a SQLite table (`feedback.db`), and a **Saved history** section reads them all back. This is the read/write database idea from Lesson 12 — now the business keeps a growing record of all feedback, not just one report.
+13 tests cover the API (structured output, schema validation, provider failures and refusals), the dashboard's statistics and error handling, and the database. The LLM is mocked, so the tests run offline and need no API key.
 
----
+## Project structure
 
-## Step 4: Keep code tidy (`database.py`)
-
-When a file gets long, we split it. All the database code (create table, save, load) lives in its own file, **`database.py`**. Then `app.py` simply imports it at the top:
-
-```python
-from database import init_db, save_results, load_history, DB_FILE
+```
+Feedback-Analyzer/
+├── api.py               # FastAPI backend: calls OpenAI or Gemini with a JSON schema
+├── app.py               # Streamlit dashboard: batch analysis, charts, history
+├── database.py          # SQLite storage
+├── sample_reviews.txt   # 10 example restaurant reviews
+├── tests/               # pytest suite (LLM mocked)
+├── images/              # Screenshots used in this README
+├── .env.example         # Template for your API key and settings
+├── pyproject.toml       # Dependencies (managed with uv)
+└── uv.lock
 ```
 
-This is the same idea as `import requests` or `import streamlit` — except now we are importing **our own** file. The app file stays short and is about the screen; the database file is about the data. Each file has one clear job.
+## Future improvements
 
----
+- Analyse reviews concurrently, or in one batched request, for large volumes.
+- Upload reviews from a CSV file and export results.
+- Track sentiment over time with dates and trend charts.
+- Deploy the backend to Cloud Run and the dashboard to Streamlit Community Cloud.
 
-## How to run the whole thing (two terminals)
+## Author
 
-| Terminal 1 (backend) | Terminal 2 (frontend) |
-|---|---|
-| `uv run fastapi dev api.py` | `uv run streamlit run app.py` |
-| stays running | opens in your browser |
+**Rakshith Dheer Reddy Kunduru**, Data & AI engineer, Dublin
 
-If the frontend shows "error" rows, the most common reason is that the backend is not running. Start it first.
-
----
-
-## Make it your own (your turn)
-
-The project works, but a real project is never "finished." Try these:
-
-1. **Show a chart.** Use `st.bar_chart` to show how many reviews fall under each theme. (Hint: `collections.Counter` already counts them.)
-2. **Filter the table.** Add a dropdown (`st.selectbox`) to show only "negative" reviews, so the owner can focus on problems first.
-3. **Read from a file.** Add a button that loads `sample_reviews.txt` straight into the text box, instead of pasting by hand (Lesson 8).
-4. **New backend field.** Ask Gemini for a one-line `suggestion` on how the business could fix each negative review. (Watch your tokens — keep it short!)
-
----
-
-## You did it
-
-You just built a two-part AI application: a backend service and a dashboard that talks to it. This is the real shape of most AI products. From here, you can swap the "analyze a review" idea for almost anything — summarize documents, tag support tickets, draft replies — and the structure stays the same.
+[GitHub](https://github.com/Dheer08) · [LinkedIn](https://www.linkedin.com/in/rakshith-dheer-reddy-446718189) · [Portfolio](https://dheer08.github.io/RakshithDheer/)
